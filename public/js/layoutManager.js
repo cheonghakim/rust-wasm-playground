@@ -1,11 +1,11 @@
 export class LayoutManager {
   static DEFAULT_STATE = {
     itemA: {
-      id: "itemA", // 제어
+      id: "itemA",
       content: `
           <div class="panel">
             <header class="grid-item-header">
-              <div class="widget-title">WASM Playground( <span class="muted" id="status">Idle</span> ) </div>
+              <div class="widget-title">WASM Playground(<span class="muted" id="status">Idle</span>) </div>
 
               <div class="d-flex align-items-center">
                 <input
@@ -17,30 +17,24 @@ export class LayoutManager {
               </div>
 
               <div class="d-flex align-items-center">
-                <button class="btn mini info" id="formatting" title="formatting codes">
+                <button class="btn text-btn" id="fontMinus" title="Decrease font size">A-</button>
+                <button class="btn text-btn" id="fontPlus" title="Increase font size">A+</button>
+                <button class="btn text-btn" id="wrapToggle" title="Toggle line wrapping">Wrap</button>
+                <button class="btn mini info" id="formatting" title="Format code (all open files)">
                   <img src="/icons/tool.svg" alt="format_button" />
                 </button>
                 <button class="btn mini" id="runBtn" title="Run (Ctrl/Cmd+Enter)">
                   <img src="/icons/play.svg" alt="play_button" />
                 </button>
-                <button class="btn mini" id="resetBtn" title="Reset editors to starter">
+                <button class="btn mini" id="resetBtn" title="Reset to starter project">
                   <img src="/icons/trash.svg" alt="reset_button" />
-                </button>              
+                </button>
               </div>
             </header>
           
-            <div class="editor grid-item-body">
-              <ul id="tabs" data-tabs>
-                <li><a data-tabby-default href="#htmlCode">HTML</a></li>
-                <li><a href="#cssCode">CSS</a></li>
-                <li><a href="#jsCode">JS</a></li>
-                <li><a href="#rustCode">RUST</a></li>
-              </ul>
-
-              <div class="tab-content" id="htmlCode"><textarea id="html" class="text-area" spellcheck="false"></textarea></div>
-              <div class="tab-content" id="cssCode"><textarea id="css" class="text-area" spellcheck="false"></textarea></div>
-              <div class="tab-content" id="jsCode"><textarea id="js" class="text-area" spellcheck="false"></textarea></div>
-              <div class="tab-content" id="rustCode"><textarea id="rust" class="text-area" spellcheck="false"></textarea></div>
+            <div class="editor grid-item-body" id="editorContainer">
+              <div class="file-tab-bar" id="fileTabBar"></div>
+              <div class="editor-pane" id="editorPane"></div>
             </div>
           </div>
   `,
@@ -82,7 +76,7 @@ export class LayoutManager {
       handle: ".grid-item-header",
       draggable: {
         handle: ".grid-item-header",
-        cancel: ".grid-item-body", // 드래그 안하는 영역
+        cancel: ".grid-item-body",
       },
     };
     this.gridManager = GridStack.init(this.config);
@@ -91,7 +85,7 @@ export class LayoutManager {
 
   addAjaxItemToGrid(state, useCompact = false) {
     const existing = document.querySelector(
-      `.grid-stack-item[gs-id="${state.id}"]`
+      `.grid-stack-item[gs-id="${state.id}"]`,
     );
     if (existing) return;
 
@@ -148,7 +142,6 @@ export class LayoutManager {
   }
 
   getScrollbarWidth() {
-    // 임시 div 생성
     const outer = document.createElement("div");
     outer.style.visibility = "hidden";
     outer.style.overflow = "scroll";
@@ -157,16 +150,13 @@ export class LayoutManager {
     outer.style.height = "100px";
     document.body.appendChild(outer);
 
-    // 내부 div 생성
     const inner = document.createElement("div");
     inner.style.width = "100%";
     inner.style.height = "100%";
     outer.appendChild(inner);
 
-    // 스크롤바 두께 = offsetWidth - clientWidth
     const scrollbarWidth = outer.offsetWidth - inner.clientWidth;
 
-    // 클린업
     document.body.removeChild(outer);
 
     return scrollbarWidth;

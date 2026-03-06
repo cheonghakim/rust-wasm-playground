@@ -1,31 +1,19 @@
 export class CodePlayground {
-  // Persist editors in localStorage
-  static KEY = "mini-playground-v1";
-
-  constructor({ meta = "", title = "", html, css, js, rust = "", tabs }) {
-    this.initCode = { html, css, js, rust };
+  constructor({ meta = "", title = "", fileManager, defaultFiles }) {
+    this.fileManager = fileManager;
+    this.defaultFiles = defaultFiles;
 
     this.debounce = null;
     this.libs = [];
-    this.tabs = tabs;
 
     this.meta = meta;
     this.title = title;
 
-    this.jsCode = null;
-    this.cssCode = null;
-    this.htmlCode = null;
-
     this.reqId = 0;
     this.compileTime = null;
-    this.currentCompileAbort = null; // AbortController for /compile
+    this.currentCompileAbort = null;
 
-    // Libraries list (CDN scripts)
     this.els = {
-      html: null,
-      css: null,
-      js: null,
-      rust: null,
       frame: document.getElementById("frame"),
       log: document.getElementById("console"),
       runBtn: document.getElementById("runBtn"),
@@ -33,6 +21,10 @@ export class CodePlayground {
       status: document.getElementById("status"),
       libUrl: document.getElementById("libUrl"),
       addLib: document.getElementById("addLib"),
+      formatting: document.getElementById("formatting"),
+      wrapToggle: document.getElementById("wrapToggle"),
+      fontPlus: document.getElementById("fontPlus"),
+      fontMinus: document.getElementById("fontMinus"),
     };
 
     this.scheduleRunEvt = this.scheduleRun.bind(this);
@@ -43,7 +35,9 @@ export class CodePlayground {
     this.onKeyDownEvt = this.onKeyDown.bind(this);
     this.onFormattingEvt = this.onFormatting.bind(this);
 
-    // Init
+    // Auto-run on file changes
+    this.fileManager.onChange = () => this.scheduleRun();
+
     this.setStarter();
     this.bindEvents();
   }
@@ -52,11 +46,12 @@ export class CodePlayground {
     this.els?.addLib?.removeEventListener("click", this.addLibEvt);
     this.els?.runBtn?.removeEventListener("click", this.runEvt);
     this.els?.resetBtn?.removeEventListener("click", this.resetEvt);
+    this.els?.formatting?.removeEventListener("click", this.onFormattingEvt);
+    this.els?.wrapToggle?.removeEventListener("click", this._wrapEvt);
+    this.els?.fontPlus?.removeEventListener("click", this._fontPlusEvt);
+    this.els?.fontMinus?.removeEventListener("click", this._fontMinusEvt);
     window.removeEventListener("message", this.onMsgEvt);
     window.removeEventListener("keydown", this.onKeyDownEvt);
-    document
-      .getElementById("formatting")
-      ?.removeEventListener("click", this.onFormattingEvt);
 
     clearTimeout(this.debounce);
     clearTimeout(this.compileTime);
@@ -64,29 +59,69 @@ export class CodePlayground {
       this.currentCompileAbort?.abort();
     } catch (_) {}
 
-    this.tabs?.destroy();
+    this.fileManager?.destruct();
   }
 
   bindEvents() {
     this.els.addLib?.addEventListener("click", this.addLibEvt);
     this.els.runBtn?.addEventListener("click", this.runEvt);
     this.els.resetBtn?.addEventListener("click", this.resetEvt);
-    window.addEventListener("message", this.onMsgEvt);
+    this.els.formatting?.addEventListener("click", this.onFormattingEvt);
     window.addEventListener("keydown", this.onKeyDownEvt);
-    document
-      .getElementById("formatting")
-      ?.addEventListener("click", this.onFormattingEvt);
+
+    this._wrapEvt = () => {
+      const on = this.fileManager.toggleLineWrapping();
+      this.updateStatus(on ? "Line wrap: ON" : "Line wrap: OFF");
+    };
+    this.els.wrapToggle?.addEventListener("click", this._wrapEvt);
+
+    this._fontPlusEvt = () => {
+      const sz = this.fileManager.changeFontSize(1);
+      this.updateStatus(`Font: ${sz}px`);
+    };
+    this._fontMinusEvt = () => {
+      const sz = this.fileManager.changeFontSize(-1);
+      this.updateStatus(`Font: ${sz}px`);
+    };
+    this.els.fontPlus?.addEventListener("click", this._fontPlusEvt);
+    this.els.fontMinus?.addEventListener("click", this._fontMinusEvt);
   }
 
-  // keydown 이벤트
   onKeyDown(e) {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
       e.preventDefault();
       this.run();
+      return;
+    }
+
+    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      e.preventDefault();
+      this.fileManager.saveState();
+      this.updateStatus("Saved");
+      return;
+    }
+
+    if ((e.ctrlKey || e.metaKey) && e.key === "w") {
+      e.preventDefault();
+      if (this.fileManager.state.activeFileId) {
+        this.fileManager.closeTab(this.fileManager.state.activeFileId);
+      }
+      return;
+    }
+
+    if (e.ctrlKey && e.key === "Tab") {
+      e.preventDefault();
+      const ids = this.fileManager.state.openFileIds;
+      if (ids.length <= 1) return;
+      const idx = ids.indexOf(this.fileManager.state.activeFileId);
+      const next = e.shiftKey
+        ? (idx - 1 + ids.length) % ids.length
+        : (idx + 1) % ids.length;
+      this.fileManager.switchToFile(ids[next]);
+      return;
     }
   }
 
-  // 프리뷰창 콘솔 표시 메세지 이벤트 핸들러
   onMsg(e) {
     const data = e.data || {};
     if (!data.__mini) return;
@@ -103,17 +138,14 @@ export class CodePlayground {
       .join(" ");
     this.print(
       data.type === "warn" ? "warn" : data.type === "error" ? "error" : "log",
-      msg
+      msg,
     );
   }
 
-  // CDN 추가
   addLibByCdn() {
     const u = this.els.libUrl?.value?.trim();
     if (!u) return;
-    // URL 유효성/중복 체크
     try {
-      // 허용: 절대/상대 모두. 상대면 base는 location.href
       new URL(u, window.location.href);
     } catch {
       this.print("warn", "Invalid URL");
@@ -124,153 +156,19 @@ export class CodePlayground {
     this.scheduleRun();
   }
 
-  loadState() {
-    try {
-      return JSON.parse(localStorage.getItem(CodePlayground.KEY)) || {};
-    } catch {
-      return {};
-    }
-  }
-
-  saveState(state) {
-    try {
-      localStorage.setItem(CodePlayground.KEY, JSON.stringify(state));
-    } catch (e) {
-      this.print("warn", "LocalStorage is full or blocked.");
-    }
-  }
-
   setStarter() {
-    const saved = this.loadState();
-
-    // 이전 인스턴스가 있었다면 원복
-    this.els.js?.toTextArea?.();
-    this.els.css?.toTextArea?.();
-    this.els.html?.toTextArea?.();
-    this.els.rust?.toTextArea?.();
-
-    // 에디터 있는지 체크
-    const jsEl = document.getElementById("js");
-    const cssEl = document.getElementById("css");
-    const htmlEl = document.getElementById("html");
-    const rustEl = document.getElementById("rust");
-
-    if (!jsEl || !cssEl || !htmlEl || !rustEl) {
-      this.updateStatus("Missing editor elements");
-      return;
+    if (!this.fileManager.state) {
+      this.fileManager.initWithDefaults(this.defaultFiles);
     }
 
-    this.setupLazyInitOnTabShow(saved);
+    this.libs = Array.isArray(this.fileManager.state.libs)
+      ? this.fileManager.state.libs
+      : [];
 
-    if (htmlEl && !this.els.html) {
-      this.els.html = CodeMirror.fromTextArea(htmlEl, {
-        lineNumbers: true,
-        mode: "htmlmixed",
-        tabSize: 2,
-        autoCloseBrackets: true,
-        autoCloseTags: true,
-      });
-      this.els.html.on("changes", this.scheduleRunEvt);
-      this.els.html.setValue(saved.html ?? this.initCode.html);
-    }
-    if (cssEl && !this.els.css) {
-      this.els.css = CodeMirror.fromTextArea(cssEl, {
-        lineNumbers: true,
-        mode: "css",
-        tabSize: 2,
-        autoCloseBrackets: true,
-      });
-      this.els.css.on("changes", this.scheduleRunEvt);
-      this.els.css.setValue(saved.css ?? this.initCode.css);
-    }
-    if (jsEl && !this.els.js) {
-      this.els.js = CodeMirror.fromTextArea(jsEl, {
-        lineNumbers: true,
-        mode: "javascript",
-        tabSize: 2,
-        autoCloseBrackets: true,
-      });
-      this.els.js.on("changes", this.scheduleRunEvt);
-      this.els.js.setValue(saved.js ?? this.initCode.js);
-    }
-
-    if (rustEl && !this.els.rust) {
-      this.els.rust = CodeMirror.fromTextArea(rustEl, {
-        lineNumbers: true,
-        mode: "rust",
-        theme: "default",
-        tabSize: 2,
-        autoCloseBrackets: true,
-      });
-      this.els.rust.on("changes", this.scheduleRunEvt);
-      this.els.rust.setValue(saved.rust ?? this.initCode.rust ?? "");
-    }
-
-    // 라이브러리 초기화
-    this.libs = Array.isArray(saved.libs) ? saved.libs : [];
-
-    // 상태 변경
     this.updateStatus("Ready");
-
-    // 실행
     this.scheduleRun();
   }
 
-  setupLazyInitOnTabShow(saved) {
-    const ensure = (id, make) => {
-      if (!this.els[id]) {
-        this.els[id] = make();
-        this.els[id].on("changes", this.scheduleRunEvt);
-        const key = id === "html" ? "html" : id;
-        this.els[id].setValue(saved[key] ?? this.initCode[key]);
-      }
-      setTimeout(() => this.els[id]?.refresh(), 0);
-    };
-    const initByPanelId = (pid) => {
-      const map = {
-        htmlCode: "html",
-        cssCode: "css",
-        jsCode: "js",
-        rustCode: "rust",
-      };
-      const id = map[pid];
-      if (!id) return;
-      ensure(id, () =>
-        CodeMirror.fromTextArea(document.getElementById(id), {
-          lineNumbers: true,
-          mode: id === "html" ? "htmlmixed" : id,
-          tabSize: 2,
-          autoCloseBrackets: true,
-          autoCloseTags: id === "html",
-        })
-      );
-    };
-
-    document.addEventListener(
-      "tabby",
-      function (event) {
-        const tab = event.target;
-        const content = event.detail.content;
-        console.log(tab);
-        const pid = tab.getAttribute("aria-controls");
-        initByPanelId(pid);
-      },
-      false
-    );
-  }
-
-  // 파서를 얻기
-  pickPrettierParser(cm) {
-    const mode = cm.getMode().name; // 'javascript' | 'css' | 'htmlmixed' 등
-    if (mode === "htmlmixed" || mode === "xml" || mode === "html")
-      return "html";
-    if (mode === "css") return "css";
-    if (mode === "javascript") return "babel";
-    if (mode === "typescript") return "typescript";
-    return "babel";
-  }
-
-  // 포맷 변경
   async onFormatting() {
     if (
       typeof prettier === "undefined" ||
@@ -280,62 +178,54 @@ export class CodePlayground {
       return;
     }
 
-    const currCssCode = this.els.css.getValue();
-    const currHtmlCode = this.els.html.getValue();
-    const currJsCode = this.els.js.getValue();
-
     try {
-      const [formattedCss, formattedHtml, formattedJs] = await Promise.all([
-        prettier.format(currCssCode, {
-          parser: "css",
-          plugins: prettierPlugins,
-          tabWidth: 2,
-          semi: true,
-          singleQuote: true,
-        }),
-        prettier.format(currHtmlCode, {
-          parser: "html",
-          plugins: prettierPlugins,
-          tabWidth: 2,
-          semi: true,
-          singleQuote: true,
-        }),
-        prettier.format(currJsCode, {
-          parser: "babel",
-          plugins: prettierPlugins,
-          tabWidth: 2,
-          semi: true,
-          singleQuote: true,
-        }),
-      ]);
+      for (const fileId of this.fileManager.state.openFileIds) {
+        const cm = this.fileManager.editors.get(fileId);
+        if (!cm) continue;
+        const file = this.fileManager.getFile(fileId);
+        if (!file) continue;
 
-      // 커서/스크롤 보존
-      const apply = (ed, val) =>
-        ed.operation(() => {
-          const sel = ed.listSelections();
-          const scroll = {
-            left: ed.getScrollInfo().left,
-            top: ed.getScrollInfo().top,
-          };
-          ed.setValue(val);
-          ed.setSelections(sel);
-          ed.scrollTo(scroll.left, scroll.top);
+        const ext = this.fileManager.getExtension(file.name);
+        const meta = this.fileManager.getMetaForFile(file.name);
+
+        if (ext === ".rs") {
+          await this.formatRust(cm);
+          continue;
+        }
+
+        if (!meta.prettierParser) continue;
+
+        const src = cm.getValue();
+        const formatted = await prettier.format(src, {
+          parser: meta.prettierParser,
+          plugins: prettierPlugins,
+          tabWidth: 2,
+          semi: true,
+          singleQuote: true,
         });
-      apply(this.els.css, formattedCss);
-      apply(this.els.html, formattedHtml);
-      apply(this.els.js, formattedJs);
 
-      // rust 포맷 (옵션)
-      this.formatRust();
+        cm.operation(() => {
+          const sel = cm.listSelections();
+          const scroll = {
+            left: cm.getScrollInfo().left,
+            top: cm.getScrollInfo().top,
+          };
+          cm.setValue(formatted);
+          try {
+            cm.setSelections(sel);
+          } catch (_) {}
+          cm.scrollTo(scroll.left, scroll.top);
+        });
+      }
     } catch (error) {
-      alert(error?.message ?? String(error));
+      this.print("error", error?.message ?? String(error));
     }
   }
 
-  async formatRust() {
-    if (!this.els.rust) return; // rust 비활성 시 무시
+  async formatRust(cm) {
+    if (!cm) return;
     try {
-      const src = this.els.rust.getValue();
+      const src = cm.getValue();
       const res = await fetch("/format", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -343,7 +233,7 @@ export class CodePlayground {
       });
       const { formatted } = await res.json();
       if (typeof formatted === "string") {
-        this.els.rust.setValue(formatted);
+        cm.setValue(formatted);
       }
     } catch (error) {
       console.error(error);
@@ -351,10 +241,9 @@ export class CodePlayground {
   }
 
   async compileAndLoad(rustSource) {
-    const myId = ++this.reqId; // 이 호출 고유 번호
+    const myId = ++this.reqId;
     this.updateStatus("Compiling…");
 
-    // 이전 요청 취소
     try {
       this.currentCompileAbort?.abort();
     } catch (_) {}
@@ -369,24 +258,22 @@ export class CodePlayground {
     });
 
     const j = await res.json();
-    if (myId !== this.reqId) return; // 더 최신 요청이 있으면 무시
+    if (myId !== this.reqId) return;
     if (!j.ok) throw new Error(j.error || "Compile failed");
     this.updateStatus("Done");
-    return j; // { ok:true, baseUrl: "/artifact/<hash>", ... }
+    return j;
   }
 
   updateStatus(msg) {
     if (this.els.status) this.els.status.textContent = msg;
   }
 
-  // Simple debounce live-run
   scheduleRun() {
     clearTimeout(this.debounce);
     this.debounce = setTimeout(this.run.bind(this), 500);
     this.updateStatus("Building…");
   }
 
-  // Capture console via postMessage + 프리뷰 HTML 생성
   makePreviewHTML(html, css, js, rust, externalScripts = []) {
     const escScript = (s) => (s || "").replace(/<\/(script)/gi, "<\\/$1>");
     const escAttr = (s) =>
@@ -399,10 +286,9 @@ export class CodePlayground {
             ">": "&gt;",
             '"': "&quot;",
             "'": "&#39;",
-          }[c])
+          })[c],
       );
 
-    // externalScripts가 문자열/undefined로 오더라도 안전 처리
     const libs = (
       Array.isArray(externalScripts) ? externalScripts : [externalScripts]
     )
@@ -410,7 +296,6 @@ export class CodePlayground {
       .map((src) => `<script src="${src}"><\/script>`)
       .join("\n");
 
-    // rust 인자는 falsy 또는 { baseUrl, exposeAs?, initName? }
     const rustModuleBlock = (() => {
       if (!rust || !rust.baseUrl) return "";
       const exposeAs = rust.exposeAs || "__rust";
@@ -432,7 +317,7 @@ export class CodePlayground {
               try { await __init(); }
               catch { await __init(new URL("${wasmUrl}", window.location.href)); }
             }
-            window["${exposeAs}"] = m; // 호환성: window.__rust == 모듈
+            window["${exposeAs}"] = m;
             window.__rust = m;
             return m;
           } catch (e) {
@@ -523,9 +408,8 @@ export class CodePlayground {
   <script type="module">
     (async () => {
       ${rustModuleBlock}
-      // Rust 모듈을 사용하는 코드가 있다면 준비 보장
       if (window.__rustReady && typeof window.__rustReady.then === "function") {
-        try { await window.__rustReady; } catch(e) { /* rust 초기화 실패 시에도 사용자 JS는 계속 실행할지 정책에 따라 결정 */ }
+        try { await window.__rustReady; } catch(e) { }
       }
       ${escScript(js)}
     })();
@@ -550,40 +434,44 @@ export class CodePlayground {
   }
 
   async run() {
-    // 상태 저장
-    this.saveState({
-      html: this.els.html.getValue(),
-      css: this.els.css.getValue(),
-      js: this.els.js.getValue(),
-      rust: this.els.rust ? this.els.rust.getValue() : "",
-      libs: this.libs,
-    });
+    this.fileManager.syncAllEditors();
+
+    this.fileManager.state.libs = this.libs;
+    this.fileManager.saveState();
     this.clearConsole();
 
     clearTimeout(this.compileTime);
     this.compileTime = setTimeout(async () => {
       try {
-        // Rust 소스가 있을 때만 컴파일
-        const rustSrc = this.els.rust ? this.els.rust.getValue().trim() : "";
+        const snapshot = this.fileManager.getAllFilesSnapshot();
+
         let rustRes = null;
-        if (rustSrc) {
-          rustRes = await this.compileAndLoad(rustSrc);
+        if (snapshot.rs.length > 0) {
+          const primaryRs =
+            snapshot.rs.find((f) => f.name === "lib.rs") || snapshot.rs[0];
+          const rustSrc = primaryRs.content.trim();
+          if (rustSrc) {
+            rustRes = await this.compileAndLoad(rustSrc);
+          }
         }
 
+        const combinedHtml = snapshot.html.map((f) => f.content).join("\n");
+        const combinedCss = snapshot.css.map((f) => f.content).join("\n");
+        const combinedJs = snapshot.js.map((f) => f.content).join("\n");
+
         const html = this.makePreviewHTML(
-          this.els.html.getValue(),
-          this.els.css.getValue(),
-          this.els.js.getValue(),
+          combinedHtml,
+          combinedCss,
+          combinedJs,
           rustRes,
-          this.libs
+          this.libs,
         );
 
-        // 미리보기 생성
         const r = await fetch("/preview", { method: "POST", body: html });
         const { id } = await r.json();
         if (!id) throw new Error("Preview endpoint failed");
         if (this.els.frame) {
-          this.els.frame.src = `/preview/${id}`; // 동일 오리진
+          this.els.frame.src = `/preview/${id}`;
         }
         this.updateStatus("Running");
       } catch (err) {
@@ -595,10 +483,12 @@ export class CodePlayground {
 
   reset() {
     try {
-      localStorage.removeItem(CodePlayground.KEY);
+      localStorage.removeItem(this.fileManager.constructor.STORAGE_KEY);
     } catch (_) {}
     this.libs = [];
-    this.setStarter();
+    this.fileManager.resetToDefaults(this.defaultFiles);
     this.clearConsole();
+    this.updateStatus("Ready");
+    this.scheduleRun();
   }
 }

@@ -8,21 +8,11 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "url";
 import os from "node:os";
 import rateLimit from "express-rate-limit";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const run = promisify(execFile);
-const app = express();
-app.use(express.json({ limit: "200kb" }));
-
-// ---- 환경 설정 ----
-const ROOT = path.join(os.tmpdir(), "editor-builds"); // Win에서 실제 존재하는 경로
 await fs.mkdir(ROOT, { recursive: true });
 
 const BUILD_TIMEOUT = Number(process.env.BUILD_TIMEOUT_MS || 300_000); // 5분
 
-// Podman 실행 파일 경로 자동 탐색 (서비스/다른 셸에서도 안전)
+// wasm-pack 경로 탐색
 function resolveBin(name) {
   try {
     const cmd = process.platform === "win32" ? "where" : "which";
@@ -35,20 +25,16 @@ function resolveBin(name) {
     return null;
   }
 }
-const PODMAN = process.env.PODMAN_PATH || resolveBin("podman") || "podman";
-const PODMAN_CONNECTION =
-  process.env.PODMAN_CONNECTION || "podman-machine-default-root";
-// 필요 시 환경변수로 고정: setx PODMAN_HOST "ssh://root@127.0.0.1:PORT/run/podman/podman.sock"
+const WASM_PACK =
+  process.env.WASM_PACK_PATH || resolveBin("wasm-pack") || "wasm-pack";
 
-// ---- 정적 리소스 ----
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// 산출물 서빙 (/artifact/<key>/out/*)
-// 서버에 남겨두세요 (이미지/wasm/js 서빙)
+// Artifact serving (/artifact/<key>/out/*)
 app.use(
   "/artifact",
   express.static(ROOT, {
@@ -59,10 +45,10 @@ app.use(
       if (filePath.endsWith(".wasm")) res.type("application/wasm");
       res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
     },
-  })
+  }),
 );
 
-// 서버 쪽 (임시 메모리 저장소)
+// Temporary memory store for previews
 const previews = new Map();
 
 app.post("/preview", express.text({ type: "*/*" }), (req, res) => {
@@ -78,7 +64,7 @@ app.get("/preview/:id", (req, res) => {
   res.send(html);
 });
 
-// 간단 요청 제한 (폭주 방지)
+// Rate limiting for compilation
 app.use(
   "/compile",
   rateLimit({
@@ -86,10 +72,10 @@ app.use(
     max: 8,
     standardHeaders: true,
     legacyHeaders: false,
-  })
+  }),
 );
 
-// 주기적 청소 (24시간 지난 작업물 제거)
+// Periodic cleanup (removes builds older than 24h)
 const TTL_MS = 24 * 60 * 60 * 1000;
 setInterval(async () => {
   try {
@@ -103,12 +89,12 @@ setInterval(async () => {
         if (now - st.mtimeMs > TTL_MS) {
           await fs.rm(full, { recursive: true, force: true });
         }
-      })
+      }),
     );
   } catch {}
 }, 60_000).unref();
 
-// rustfmt (없으면 원문 반환)
+// Rust formatting
 app.post("/format", async (req, res) => {
   const code = req.body.code || "";
   try {
@@ -121,15 +107,14 @@ app.post("/format", async (req, res) => {
   }
 });
 
-// 컴파일 엔드포인트
+// Compilation endpoint
 app.post("/compile", async (req, res) => {
   try {
-    // 1) 사용자 코드 수신 + 최소 검증/보정
     let userSrc = String(req.body?.source || "").trim();
     if (!userSrc.includes("#[wasm_bindgen]")) {
       return res
         .status(400)
-        .json({ ok: false, error: "Add #[wasm_bindgen] exports." });
+        .json({ ok: false, error: "Missing #[wasm_bindgen] exports." });
     }
     if (
       userSrc.includes("#[wasm_bindgen]") &&
@@ -138,7 +123,6 @@ app.post("/compile", async (req, res) => {
       userSrc = `use wasm_bindgen::prelude::*;\n\n${userSrc}`;
     }
 
-    // 2) 동일 소스 캐시 키
     const key = crypto
       .createHash("sha256")
       .update(userSrc)
@@ -149,7 +133,7 @@ app.post("/compile", async (req, res) => {
     const srcDir = path.join(workDir, "crate");
     const outDir = path.join(workDir, "out");
 
-    // 캐시 히트
+    // Cache hit
     try {
       const st = await fs.stat(path.join(outDir, "hello_wasm.js"));
       if (st.isFile()) {
@@ -157,10 +141,10 @@ app.post("/compile", async (req, res) => {
       }
     } catch {}
 
-    // 3) 원자적 빌드 (경합 방지)
+    // Atomic build (prevent race conditions)
     const tmpDir = path.join(
       ROOT,
-      `${key}.tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`
+      `${key}.tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     );
     const tmpSrc = path.join(tmpDir, "crate");
     const tmpOut = path.join(tmpDir, "out");
@@ -182,49 +166,21 @@ crate-type = ["cdylib"]
 wasm-bindgen = "0.2.95"
 console_error_panic_hook = "0.1"
 `,
-      "utf8"
+      "utf8",
     );
 
-    // src/lib.rs (사용자 코드)
+    // src/lib.rs
     await fs.writeFile(path.join(tmpSrc, "src", "lib.rs"), userSrc, "utf8");
 
-    // 4) Podman 실행 준비
-    const hostWorkDir = tmpDir; // Windows 경로 그대로 사용
-    const cargoReg = path.join(ROOT, "_cargoRegistry");
-    const cargoGit = path.join(ROOT, "_cargoGit");
-    await fs.mkdir(cargoReg, { recursive: true });
-    await fs.mkdir(cargoGit, { recursive: true });
-
-    const args = [
-      "--connection",
-      PODMAN_CONNECTION,
-      "run",
-      "--rm",
-      "--cpus",
-      "1",
-      "--memory",
-      "512m",
-      "--pids-limit",
-      "256",
-      "-v",
-      `${hostWorkDir}:/work`,
-      "-v",
-      `${cargoReg}:/usr/local/cargo/registry`,
-      "-v",
-      `${cargoGit}:/usr/local/cargo/git`,
-      "--pull=never",
-      "localhost/rust-wasm-builder:1",
-      "/usr/local/bin/build-wasm",
-    ];
-
-    // 5) 실행
+    // Run wasm-pack
     try {
-      console.log("podman bin:", PODMAN);
-      console.log("podman args:", args.join(" "));
-      await run(PODMAN, args, {
-        timeout: BUILD_TIMEOUT,
-        env: { ...process.env }, // 필요 시 PODMAN_HOST 고정 가능
-      });
+      console.log("wasm-pack bin:", WASM_PACK);
+      console.log("crate dir:", tmpSrc, "→ out:", tmpOut);
+      await run(
+        WASM_PACK,
+        ["build", tmpSrc, "--release", "--target", "web", "--out-dir", tmpOut],
+        { timeout: BUILD_TIMEOUT, env: { ...process.env } },
+      );
     } catch (error) {
       console.error("STDERR:", error?.stderr?.toString?.() ?? error?.stderr);
       console.error("STDOUT:", error?.stdout?.toString?.() ?? error?.stdout);
@@ -234,18 +190,18 @@ console_error_panic_hook = "0.1"
             error?.stderr?.toString?.() ||
             error?.stdout?.toString?.() ||
             String(error)
-          ).slice(0, 12000)
+          ).slice(0, 12000),
       );
     }
 
-    // 6) 산출물 확인
+    // Check output
     const built = await fs
       .stat(path.join(tmpOut, "hello_wasm.js"))
       .then(() => true)
       .catch(() => false);
     if (!built) throw new Error("Build succeeded but hello_wasm.js not found.");
 
-    // 7) 원자적 승격
+    // Final promotion
     await fs.rm(workDir, { recursive: true, force: true });
     await fs.mkdir(path.dirname(workDir), { recursive: true });
     await fs.rename(tmpDir, workDir);

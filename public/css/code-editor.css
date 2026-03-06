@@ -74,6 +74,18 @@ header .btn.info:hover {
   overflow: clip;
 }
 
+.btn.text-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0.15rem 0.35rem;
+  color: #666;
+}
+.btn.text-btn:hover {
+  color: #333;
+  background: #e8e8e8;
+  border-radius: 4px;
+}
+
 header .left,
 header .right {
   display: flex;
@@ -193,27 +205,12 @@ iframe {
   width: 7em;
 }
 
+/* ===== Editor Container ===== */
 .editor {
   display: flex;
+  flex-direction: column;
   height: 100%;
-}
-
-.tab-content {
-  padding: 0px !important;
-  height: calc(100% - 38.45px);
-}
-
-/* 텍스트영역 */
-.text-area {
-  border: 0;
-  outline: 0;
-  resize: none;
-  padding: 8px 12px;
-  line-height: var(--lh);
-  height: var(--height);
-  overflow: auto;
-  font: 14px var(--font);
-  white-space: pre; /* 줄바꿈 off일 때 가로 스크롤 허용 */
+  overflow: hidden;
 }
 
 @media (max-width: 1024px) {
@@ -224,8 +221,7 @@ iframe {
   }
 }
 
-/* grid-stack */
-
+/* ===== GridStack ===== */
 .grid-stack-item {
   background: transparent;
 }
@@ -247,31 +243,234 @@ iframe {
 .grid-item-body {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  overflow: hidden;
 }
 
-/* Tabby */
-#tabs {
-  padding: 0.24rem;
-  font-size: 12px;
+/* ===== File Tab Bar ===== */
+.file-tab-bar {
+  display: flex;
+  align-items: center;
+  background: #ebebeb;
+  border-bottom: 1px solid #c9c9c9;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  min-height: 34px;
+  flex-shrink: 0;
+  user-select: none;
 }
-#tabs li a {
-  color: rgb(165, 165, 165);
+
+.file-tab-bar::-webkit-scrollbar {
+  height: 3px;
+}
+.file-tab-bar::-webkit-scrollbar-thumb {
+  background: #bbb;
+  border-radius: 2px;
+}
+
+.file-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #888;
+  background: transparent;
+  border: none;
+  border-right: 1px solid #ddd;
+  cursor: pointer;
+  white-space: nowrap;
+  position: relative;
+  transition: background 0.15s, color 0.15s;
+}
+
+.file-tab:hover {
+  background: #f0f0f0;
+  color: #555;
+}
+
+.file-tab.active {
+  background: #f5f5f5;
+  color: #2b2b2b;
+  border-bottom: 2px solid var(--accent);
   font-weight: 600;
 }
 
-@media (min-width: 30em) {
-  [role="tab"] {
-    border-radius: 4px;
-  }
+.file-tab .tab-icon {
+  font-size: 9px;
+  font-weight: 700;
+  color: #999;
+  min-width: 20px;
+  text-align: center;
+  padding: 4px;
+  border-radius: 3px;
+  background: #e0e0e0;
+  line-height: 1.2;
 }
 
-@media (min-width: 30em) {
-  [role="tab"][aria-selected="true"] {
-    color: rgb(43, 43, 43) !important;
-    border-bottom: 1px solid lightgray;
-  }
+/* 확장자별 아이콘 색상 */
+.file-tab .tab-icon.type-html { background: #fde8e2; color: #e44d26; }
+.file-tab .tab-icon.type-htm  { background: #fde8e2; color: #e44d26; }
+.file-tab .tab-icon.type-css  { background: #e0e7ff; color: #264de4; }
+.file-tab .tab-icon.type-js   { background: #fef9c3; color: #b8a100; }
+.file-tab .tab-icon.type-mjs  { background: #fef9c3; color: #b8a100; }
+.file-tab .tab-icon.type-json { background: #dcfce7; color: #3d7a1e; }
+.file-tab .tab-icon.type-rs   { background: #fde8d8; color: #b5651d; }
+.file-tab .tab-icon.type-md   { background: #dbeafe; color: #083fa1; }
+.file-tab .tab-icon.type-xml  { background: #f0e6ff; color: #6b21a8; }
+.file-tab .tab-icon.type-svg  { background: #f0e6ff; color: #6b21a8; }
+.file-tab .tab-icon.type-txt  { background: #e8e8e8; color: #666; }
+
+.file-tab .tab-label {
+  cursor: pointer;
 }
 
-[role="tab"] {
-  padding: 0.5em 0.75em;
+.file-tab .tab-close {
+  display: none;
+  width: 16px;
+  height: 16px;
+  line-height: 14px;
+  text-align: center;
+  font-size: 14px;
+  color: #999;
+  border: none;
+  background: transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 2px;
+}
+
+.file-tab:hover .tab-close,
+.file-tab.active .tab-close {
+  display: inline-block;
+}
+
+.file-tab .tab-close:hover {
+  background: #ddd;
+  color: #333;
+}
+
+/* + 새 파일 버튼 */
+.file-tab-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0 4px;
+  font-size: 18px;
+  color: #999;
+  background: transparent;
+  border: 1px dashed transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.file-tab-new:hover {
+  color: #555;
+  border-color: #ccc;
+  background: #f0f0f0;
+}
+
+/* ===== Editor Pane ===== */
+.editor-pane {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.editor-pane .editor-instance {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+}
+
+.editor-pane .editor-instance.active {
+  display: block;
+}
+
+/* ===== Inline File Name Input ===== */
+.file-name-input {
+  font-size: 12px;
+  font-family: inherit;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  outline: none;
+  background: white;
+  width: 140px;
+  height: 24px;
+  color: #333;
+}
+
+/* ===== Context Menu ===== */
+.context-menu {
+  position: fixed;
+  z-index: 10000;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  padding: 4px 0;
+  min-width: 140px;
+}
+
+.context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: #333;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-menu-item:hover {
+  background: #f0f0f0;
+}
+
+.context-menu-item.danger {
+  color: #ef4444;
+}
+
+.context-menu-item.danger:hover {
+  background: #fef2f2;
+}
+
+.context-menu-separator {
+  height: 1px;
+  background: #eee;
+  margin: 4px 0;
+}
+
+/* ===== CodeMirror search dialog fix ===== */
+.CodeMirror-dialog {
+  font-size: 12px;
+}
+.CodeMirror-dialog input {
+  font-size: 12px;
+  height: auto;
+  padding: 2px 6px;
+  width: auto;
+}
+
+/* ===== Fold gutter ===== */
+.CodeMirror-foldgutter-open,
+.CodeMirror-foldgutter-folded {
+  cursor: pointer;
+}
+.CodeMirror-foldgutter-open::after {
+  content: "\25BE";
+}
+.CodeMirror-foldgutter-folded::after {
+  content: "\25B8";
 }

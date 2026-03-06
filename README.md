@@ -33,4 +33,5 @@ console.log(add(2, 3)); // 5
 
 ---
 
-![Preview](https://github.com/user-attachments/assets/cf2f4a81-fc16-4583-8fc0-d0c31eb805ff)
+<img width="1919" height="916" alt="image" src="https://github.com/user-attachments/assets/896b1b24-ddd4-4d88-a9ca-19dd18b9e511" />
+
